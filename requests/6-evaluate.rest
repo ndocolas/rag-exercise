@@ -1,0 +1,66 @@
+### 6. Avaliação de retrieval — embedder vs Ground Truth (FiQA).
+###
+### SEMPRE roda o dataset INTEIRO (todas as queries do FiQA-2018 com
+### qrels) — garante que os 3 embedders são avaliados nas MESMAS
+### perguntas e os `score` são comparáveis 1:1.
+###
+### Sem LLM, sem geração — só retrieval. Primeira chamada por embedder
+### pode demorar (~1-2min) enquanto cacheia embeddings; chamadas
+### seguintes são instantâneas.
+###
+### Resposta JSON (campos):
+###   - embedder            → modelo avaliado
+###   - queries_avaliadas   → total de queries do FiQA rodadas
+###   - hit_rate            → % de queries com ≥1 doc relevante no top-10
+###   - precision@10        → relevantes / 10 (em média)
+###   - recall@10           → relevantes recuperados / relevantes existentes
+###   - ndcg@10             → qualidade do ranking (0-1)
+###   - score               → nota 0-100 = média de (hit_rate, recall@10, ndcg@10)
+###
+### Pré-req: rodar `3-index.rest` uma vez para popular as 3 coleções.
+
+@host = http://localhost:8000
+
+
+### 2.6 — `head` do ground truth: 10 queries random + TEXTO dos docs esperados inline.
+###       Amostra determinística por seed (default = 42). Resposta = pergunta + docs relevantes.
+GET {{host}}/dataset/head
+
+### 6.1 — `openai` (text-embedding-3-small).
+POST {{host}}/evaluate
+Content-Type: application/json
+
+{
+  "embedder": "openai",
+  "top_k": 10
+}
+
+
+### 6.2 — `bge-small`. Mesmas queries, comparação direta.
+POST {{host}}/evaluate
+Content-Type: application/json
+
+{
+  "embedder": "bge-small",
+  "top_k": 10
+}
+
+
+### 6.3 — `bge-large`. Compare os 3 `score` lado a lado.
+POST {{host}}/evaluate
+Content-Type: application/json
+
+{
+  "embedder": "bge-large",
+  "top_k": 10
+}
+
+
+### 6.4 — Markdown human-readable (`?format=markdown`).
+POST {{host}}/evaluate?format=markdown
+Content-Type: application/json
+
+{
+  "embedder": "openai",
+  "top_k": 10
+}

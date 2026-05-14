@@ -106,6 +106,35 @@ class CompareJSONResponse(BaseModel):
     results: dict[str, CompareEmbedderResult]
 
 
+class EvaluateRequest(BaseModel):
+    """Benchmark de retrieval contra o ground truth do FiQA.
+
+    Roda o dataset INTEIRO no embedder escolhido e compara os doc_ids
+    retornados contra os qrels (relevancia oficial). Sempre todas as
+    queries — garante comparacao 1:1 entre embedders.
+    """
+
+    embedder: EmbedderAlias = "openai"
+    top_k: int = Field(default=10, ge=1, le=50)
+
+
+class EvaluateJSONResponse(BaseModel):
+    """Resposta plana e direta. Todas as metricas sao a nivel de doc.
+
+    `hit_rate`, `recall@10` e `ndcg@10` viram nota 0-100 em `score`.
+    """
+
+    embedder: EmbedderAlias
+    queries_avaliadas: int
+    hit_rate: float
+    precision_at_10: float = Field(serialization_alias="precision@10")
+    recall_at_10: float = Field(serialization_alias="recall@10")
+    ndcg_at_10: float = Field(serialization_alias="ndcg@10")
+    score: int
+
+    model_config = {"populate_by_name": True}
+
+
 class IndexEmbedderResult(BaseModel):
     embedder: EmbedderAlias
     embedder_label: str

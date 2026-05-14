@@ -7,6 +7,10 @@ from rag_eval.services.response.compare_renderer import (
     CompareRenderInput,
     EmbedderRun,
 )
+from rag_eval.services.response.evaluate_renderer import (
+    EvaluateRenderer,
+    EvaluateRenderInput,
+)
 
 __all__ = [
     "AskRenderer",
@@ -15,4 +19,6 @@ __all__ = [
     "CompareRenderer",
     "CompareRenderInput",
     "EmbedderRun",
+    "EvaluateRenderer",
+    "EvaluateRenderInput",
 ]
