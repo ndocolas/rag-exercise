@@ -41,7 +41,9 @@ class SemanticChunker(Chunker):
                 all_sentences.extend(sentences)
 
         all_vecs = (
-            np.asarray(self._embedder.embed_sync(all_sentences)) if all_sentences else np.zeros((0, 0))
+            np.asarray(self._embedder.embed_sync(all_sentences))
+            if all_sentences
+            else np.zeros((0, 0))
         )
 
         chunks: list[Chunk] = []

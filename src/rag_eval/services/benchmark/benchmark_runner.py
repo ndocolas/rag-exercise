@@ -134,14 +134,15 @@ class BenchmarkRunner:
                     size = await self._store.collection_size(spec.collection_name())
                     self._record(
                         "indexing",
-                        f"{spec.pipeline_id} {spec.chunking}+{spec.embedder.split(':',1)[-1]} points={size}",
+                        (
+                            f"{spec.pipeline_id} {spec.chunking}+"
+                            f"{spec.embedder.split(':', 1)[-1]} points={size}"
+                        ),
                         t_p,
                         {"pipeline_id": spec.pipeline_id, "points": size},
                     )
                 except Exception as exc:  # noqa: BLE001
-                    logger.error(
-                        "indexing_failed", pipeline=spec.pipeline_id, error=str(exc)
-                    )
+                    logger.error("indexing_failed", pipeline=spec.pipeline_id, error=str(exc))
                     failed.add(spec.pipeline_id)
                     self._record(
                         "indexing_failed",
@@ -260,9 +261,7 @@ class BenchmarkRunner:
             self._update(experiment_id, "completed", phase="done")
 
         except Exception as exc:  # noqa: BLE001
-            logger.error(
-                "benchmark_failed", experiment_id=experiment_id, error=str(exc)
-            )
+            logger.error("benchmark_failed", experiment_id=experiment_id, error=str(exc))
             self._experiment_store.update(experiment_id, status="failed", error=str(exc))
             raise
 

@@ -122,9 +122,7 @@ class DatasetRouter:
                 queries_size=len(data.queries),
                 avg_doc_chars=round(total_doc_chars / max(1, len(data.corpus)), 1),
                 avg_query_chars=round(total_query_chars / max(1, len(data.queries)), 1),
-                avg_relevant_docs_per_query=round(
-                    total_relevant / max(1, len(data.queries)), 2
-                ),
+                avg_relevant_docs_per_query=round(total_relevant / max(1, len(data.queries)), 2),
             )
             return DatasetPreviewResponse(
                 stats=stats,
@@ -176,9 +174,7 @@ class DatasetRouter:
                 queries_size=len(data.queries),
                 avg_doc_chars=round(total_doc_chars / max(1, len(data.corpus)), 1),
                 avg_query_chars=round(total_query_chars / max(1, len(data.queries)), 1),
-                avg_relevant_docs_per_query=round(
-                    total_relevant / max(1, len(data.queries)), 2
-                ),
+                avg_relevant_docs_per_query=round(total_relevant / max(1, len(data.queries)), 2),
             )
             return FullDatasetResponse(stats=stats, documents=documents, queries=queries)
 

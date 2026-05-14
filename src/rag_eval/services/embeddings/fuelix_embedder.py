@@ -10,10 +10,10 @@ from tenacity import (
     wait_exponential,
 )
 
-_RATE_LIMIT_STATUS = 429
-
 from rag_eval.db.embedding_cache import EmbeddingCache
 from rag_eval.services.embeddings.embedder import Embedder
+
+_RATE_LIMIT_STATUS = 429
 
 
 class FuelixEmbedder(Embedder):

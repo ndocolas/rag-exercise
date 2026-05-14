@@ -222,9 +222,7 @@ class ExperimentsRouter:
                 ) from exc
 
             report = ReportGenerator(results_store, seed=self._settings.seed).generate()
-            digest = build_digest(
-                results_store.read_aggregate(), results_store.read_per_query()
-            )
+            digest = build_digest(results_store.read_aggregate(), results_store.read_per_query())
             duration = time.monotonic() - t0
 
             winner = (

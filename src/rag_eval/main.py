@@ -7,16 +7,6 @@ import httpx
 import structlog
 from fastapi import FastAPI
 
-structlog.configure(
-    processors=[
-        structlog.processors.add_log_level,
-        structlog.processors.TimeStamper(fmt="iso"),
-        structlog.dev.ConsoleRenderer(exception_formatter=structlog.dev.plain_traceback),
-    ],
-    wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
-    cache_logger_on_first_use=True,
-)
-
 from rag_eval.db.embedding_cache import EmbeddingCache
 from rag_eval.db.experiment_store import ExperimentStore
 from rag_eval.db.vector_store import QdrantVectorStore
@@ -27,6 +17,16 @@ from rag_eval.routes.index import IndexRouter
 from rag_eval.routes.query import QueryRouter
 from rag_eval.services.generation.llm_client import FuelixLLMClient
 from rag_eval.utils.settings import Settings, get_settings
+
+structlog.configure(
+    processors=[
+        structlog.processors.add_log_level,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.dev.ConsoleRenderer(exception_formatter=structlog.dev.plain_traceback),
+    ],
+    wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
+    cache_logger_on_first_use=True,
+)
 
 logger = structlog.get_logger(__name__)
 

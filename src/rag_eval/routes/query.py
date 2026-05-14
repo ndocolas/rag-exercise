@@ -121,9 +121,7 @@ class QueryRouter:
         return AskJSONResponse(
             question=req.question,
             answer=rag_result.answer,
-            retrieved_documents={
-                str(i): text for i, text in enumerate(chunks_texts, start=1)
-            },
+            retrieved_documents={str(i): text for i, text in enumerate(chunks_texts, start=1)},
             response_without_rag=answer_no_rag,
         )
 
@@ -140,17 +138,13 @@ class QueryRouter:
             embedder_runs = [
                 EmbedderRun(
                     embedder_alias=r.alias,
-                    chunks_texts=[rc.chunk.text for rc in r.answer.retrieved]
-                    if r.answer
-                    else [],
+                    chunks_texts=[rc.chunk.text for rc in r.answer.retrieved] if r.answer else [],
                     answer=r.answer.answer if r.answer else "",
                     error=r.error,
                 )
                 for r in runs
             ]
-            render_input = CompareRenderInput(
-                question=req.question, runs=embedder_runs
-            )
+            render_input = CompareRenderInput(question=req.question, runs=embedder_runs)
             return PlainTextResponse(self._compare_renderer.render(render_input))
 
         results: dict[str, CompareEmbedderResult] = {}
@@ -161,15 +155,12 @@ class QueryRouter:
             results[r.alias] = CompareEmbedderResult(
                 answer=r.answer.answer,
                 retrieved_documents={
-                    str(i): rc.chunk.text
-                    for i, rc in enumerate(r.answer.retrieved, start=1)
+                    str(i): rc.chunk.text for i, rc in enumerate(r.answer.retrieved, start=1)
                 },
             )
         return CompareJSONResponse(question=req.question, results=results)
 
-    async def _run_rag(
-        self, spec: PipelineSpec, question: str, top_k: int
-    ) -> PipelineAnswer:
+    async def _run_rag(self, spec: PipelineSpec, question: str, top_k: int) -> PipelineAnswer:
         embedder = self._get_embedder(spec)
         retriever = Retriever(embedder, self._store, spec.collection_name(), top_k=top_k)
         pipeline = RAGPipeline(
@@ -214,9 +205,7 @@ class QueryRouter:
                 error=f"{type(exc).__name__}: {exc}",
             )
 
-    async def _require_indexed(
-        self, spec: PipelineSpec, *, embedder_alias: EmbedderAlias
-    ) -> None:
+    async def _require_indexed(self, spec: PipelineSpec, *, embedder_alias: EmbedderAlias) -> None:
         collection = spec.collection_name()
         try:
             size = await self._store.collection_size(collection)

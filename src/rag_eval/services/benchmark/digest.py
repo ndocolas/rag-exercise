@@ -9,6 +9,7 @@ returned inline from ``POST /benchmark`` so a `.rest` client can answer
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import cast
 
 import pandas as pd
 
@@ -102,9 +103,7 @@ def _best_by(df: pd.DataFrame, group_col: str) -> dict[str, DigestPipelineScore]
         return {}
     out: dict[str, DigestPipelineScore] = {}
     for group_value, sub in df.groupby(group_col):
-        sub = sub.sort_values(
-            ["composite_score", "pipeline_id"], ascending=[False, True]
-        )
+        sub = sub.sort_values(["composite_score", "pipeline_id"], ascending=[False, True])
         top = sub.iloc[0]
         out[str(group_value)] = DigestPipelineScore(
             pipeline_id=str(top["pipeline_id"]),
@@ -131,11 +130,11 @@ def _build_takeaways(
     if ranked.empty:
         return ["No results available."]
 
-    chunking_means = (
-        ranked.groupby("chunking")["composite_score"].mean().sort_values(ascending=False)
-    )
+    chunking_means_raw = cast(pd.Series, ranked.groupby("chunking")["composite_score"].mean())
+    chunking_means = chunking_means_raw.sort_values(ascending=False)
     if len(chunking_means) >= 2:
-        top_ch, top_score = chunking_means.index[0], float(chunking_means.iloc[0])
+        top_ch = str(chunking_means.index[0])
+        top_score = float(chunking_means.iloc[0])
         deltas = [
             f"{_format_pct((top_score - float(v)) / float(v) if v else 0.0)} vs {k}"
             for k, v in chunking_means.iloc[1:].items()
@@ -144,12 +143,13 @@ def _build_takeaways(
             f"Best chunking on average: {_short_chunking(top_ch)} ({', '.join(deltas)})."
         )
 
-    embedder_means = (
-        ranked.groupby("embedder")["composite_score"].mean().sort_values(ascending=False)
-    )
+    embedder_means_raw = cast(pd.Series, ranked.groupby("embedder")["composite_score"].mean())
+    embedder_means = embedder_means_raw.sort_values(ascending=False)
     if len(embedder_means) >= 2:
-        top_em = embedder_means.index[0]
-        win_count = sum(1 for v in best_chunking.values() if _embedder_for_pid(ranked, v.pipeline_id) == top_em)
+        top_em = str(embedder_means.index[0])
+        win_count = sum(
+            1 for v in best_chunking.values() if _embedder_for_pid(ranked, v.pipeline_id) == top_em
+        )
         total = len(best_chunking) or 1
         takeaways.append(
             f"Best embedder on average: {_short_embedder(top_em)} "
@@ -183,9 +183,7 @@ def _recall_col(df: pd.DataFrame) -> str | None:
     return None
 
 
-def _build_ranking(
-    ranked: pd.DataFrame, latency: dict[str, float]
-) -> list[DigestRanking]:
+def _build_ranking(ranked: pd.DataFrame, latency: dict[str, float]) -> list[DigestRanking]:
     ndcg_col = _ndcg_col(ranked)
     recall_col = _recall_col(ranked)
     out: list[DigestRanking] = []
@@ -197,12 +195,22 @@ def _build_ranking(
                 pipeline_id=pid,
                 chunking=str(row["chunking"]),
                 embedder=str(row["embedder"]),
-                composite_score=float(row["composite_score"]),
-                ndcg_at_10=float(row[ndcg_col]) if ndcg_col and pd.notna(row[ndcg_col]) else None,
-                recall_at_10=(
-                    float(row[recall_col]) if recall_col and pd.notna(row[recall_col]) else None
+                composite_score=float(cast(float, row["composite_score"])),
+                ndcg_at_10=(
+                    float(cast(float, row[ndcg_col]))
+                    if ndcg_col and bool(pd.notna(row[ndcg_col]))
+                    else None
                 ),
-                mrr=float(row["metric.mrr"]) if "metric.mrr" in ranked.columns and pd.notna(row.get("metric.mrr")) else None,
+                recall_at_10=(
+                    float(cast(float, row[recall_col]))
+                    if recall_col and bool(pd.notna(row[recall_col]))
+                    else None
+                ),
+                mrr=(
+                    float(cast(float, row["metric.mrr"]))
+                    if "metric.mrr" in ranked.columns and bool(pd.notna(row.get("metric.mrr")))
+                    else None
+                ),
                 avg_latency_ms=latency.get(pid),
             )
         )
@@ -235,14 +243,11 @@ def build_digest(aggregate_df: pd.DataFrame, per_query_df: pd.DataFrame) -> Dige
     top = ranked.iloc[0]
     runner_up_score = float(ranked.iloc[1]["composite_score"]) if len(ranked) > 1 else None
     headline_bits = [
-        f"{_short_chunking(str(top['chunking']))} + "
-        f"{_short_embedder(str(top['embedder']))} wins"
+        f"{_short_chunking(str(top['chunking']))} + {_short_embedder(str(top['embedder']))} wins"
     ]
     if runner_up_score is not None and runner_up_score > 0:
         delta = (float(top["composite_score"]) - runner_up_score) / runner_up_score
-        headline_bits.append(
-            f"by {_format_pct(delta)} over {ranked.iloc[1]['pipeline_id']}"
-        )
+        headline_bits.append(f"by {_format_pct(delta)} over {ranked.iloc[1]['pipeline_id']}")
     winner = DigestWinner(
         pipeline_id=str(top["pipeline_id"]),
         chunking=str(top["chunking"]),
@@ -256,8 +261,8 @@ def build_digest(aggregate_df: pd.DataFrame, per_query_df: pd.DataFrame) -> Dige
 
     fastest = slowest = None
     if latency:
-        f_pid = min(latency, key=latency.get)
-        s_pid = max(latency, key=latency.get)
+        f_pid = min(latency, key=lambda k: latency[k])
+        s_pid = max(latency, key=lambda k: latency[k])
         fastest = DigestLatency(pipeline_id=f_pid, avg_latency_ms=latency[f_pid])
         slowest = DigestLatency(pipeline_id=s_pid, avg_latency_ms=latency[s_pid])
 

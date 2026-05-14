@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from typing import Literal
 
 import structlog
 from fastapi import APIRouter
@@ -70,9 +71,7 @@ class IndexRouter:
         corpus_size = len(data.corpus)
 
         chunker = FixedChunker(chunk_size=512, chunk_overlap=64)
-        chunks_for_pipeline = await asyncio.to_thread(
-            chunker.chunk, list(data.corpus.values())
-        )
+        chunks_for_pipeline = await asyncio.to_thread(chunker.chunk, list(data.corpus.values()))
 
         results: list[IndexEmbedderResult] = []
         for alias in _DIDACTIC_EMBEDDERS:
@@ -110,7 +109,7 @@ class IndexRouter:
 
     async def _index_one(
         self, spec: PipelineSpec, chunks: list
-    ) -> tuple[str, int]:
+    ) -> tuple[Literal["already_indexed", "indexed"], int]:
         embedder = self._make_embedder(spec)
         collection = spec.collection_name()
         await self._store.ensure_collection(collection, embedder.dim, recreate=False)
@@ -124,9 +123,7 @@ class IndexRouter:
             vectors = await embedder.embed([c.text for c in piece])
             await self._store.upsert(collection, piece, vectors)
         size = await self._store.collection_size(collection)
-        logger.info(
-            "indexed", pipeline=spec.pipeline_id, collection=collection, points=size
-        )
+        logger.info("indexed", pipeline=spec.pipeline_id, collection=collection, points=size)
         return "indexed", size
 
     @staticmethod
