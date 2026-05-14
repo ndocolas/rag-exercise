@@ -12,7 +12,7 @@ class LocalEmbedder(Embedder):
 
     _MODEL_DIMS = {
         "BAAI/bge-small-en-v1.5": 384,
-        "BAAI/bge-m3": 1024,
+        "BAAI/bge-large-en-v1.5": 1024,
         "sentence-transformers/all-MiniLM-L6-v2": 384,
     }
 

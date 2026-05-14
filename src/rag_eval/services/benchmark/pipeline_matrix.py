@@ -7,7 +7,7 @@ from dataclasses import dataclass
 class PipelineSpec:
     pipeline_id: str
     chunking: str  # "fixed" | "semantic" | "hierarchical"
-    embedder: str  # "fuelix:text-embedding-3-small" | "local:bge-small" | "local:bge-m3"
+    embedder: str  # "fuelix:text-embedding-3-small" | "local:bge-small" | "local:bge-large"
     chunker_kwargs: dict
     embedder_kwargs: dict
 
@@ -32,7 +32,7 @@ class PipelineMatrix:
     EMBEDDERS = (
         ("fuelix:text-embedding-3-small", {"model": "text-embedding-3-small"}),
         ("local:BAAI/bge-small-en-v1.5", {"model": "BAAI/bge-small-en-v1.5"}),
-        ("local:BAAI/bge-m3", {"model": "BAAI/bge-m3"}),
+        ("local:BAAI/bge-large-en-v1.5", {"model": "BAAI/bge-large-en-v1.5"}),
     )
 
     @classmethod
