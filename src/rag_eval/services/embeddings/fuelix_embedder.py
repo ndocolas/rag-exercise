@@ -10,6 +10,8 @@ from tenacity import (
     wait_exponential,
 )
 
+_RATE_LIMIT_STATUS = 429
+
 from rag_eval.db.embedding_cache import EmbeddingCache
 from rag_eval.services.embeddings.embedder import Embedder
 
@@ -39,9 +41,18 @@ class FuelixEmbedder(Embedder):
         self._model = model
         self._base_url = base_url.rstrip("/")
         self._cache = cache
-        self._semaphore = asyncio.Semaphore(concurrency)
+        self._concurrency = concurrency
+        self._semaphore: asyncio.Semaphore | None = None
+        self._semaphore_loop: asyncio.AbstractEventLoop | None = None
         self._batch_size = batch_size
         self._timeout = timeout
+
+    def _get_semaphore(self) -> asyncio.Semaphore:
+        loop = asyncio.get_event_loop()
+        if self._semaphore is None or self._semaphore_loop is not loop:
+            self._semaphore = asyncio.Semaphore(self._concurrency)
+            self._semaphore_loop = loop
+        return self._semaphore
 
     @property
     def name(self) -> str:
@@ -88,12 +99,12 @@ class FuelixEmbedder(Embedder):
     async def _embed_batch(
         self, client: httpx.AsyncClient, batch: list[tuple[int, str]]
     ) -> list[list[float]]:
-        async with self._semaphore:
+        async with self._get_semaphore():
             return await self._call(client, [t for _, t in batch])
 
     @retry(
-        wait=wait_exponential(multiplier=1, min=1, max=30),
-        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=2, min=2, max=60),
+        stop=stop_after_attempt(10),
         retry=retry_if_exception_type((httpx.HTTPStatusError, httpx.TransportError)),
         reraise=True,
     )
@@ -106,6 +117,14 @@ class FuelixEmbedder(Embedder):
             },
             json={"model": self._model, "input": inputs, "encoding_format": "float"},
         )
+        if response.status_code == _RATE_LIMIT_STATUS:
+            retry_after = response.headers.get("retry-after")
+            try:
+                delay = float(retry_after) if retry_after else 5.0
+            except ValueError:
+                delay = 5.0
+            await asyncio.sleep(min(delay, 60.0))
+            response.raise_for_status()
         response.raise_for_status()
         payload = response.json()
         return [item["embedding"] for item in payload["data"]]
