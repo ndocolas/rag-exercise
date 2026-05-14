@@ -1,24 +1,67 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+import asyncio
+from dataclasses import dataclass
+
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import PlainTextResponse
 
 from rag_eval.db.embedding_cache import EmbeddingCache
 from rag_eval.db.vector_store import QdrantVectorStore
-from rag_eval.models.schemas import QueryRequest, QueryResponse, RetrievedContext
+from rag_eval.models.schemas import (
+    EMBEDDER_TO_PIPELINE,
+    AskJSONResponse,
+    AskRequest,
+    CompareEmbedderResult,
+    CompareJSONResponse,
+    CompareRequest,
+    EmbedderAlias,
+)
 from rag_eval.services.benchmark.pipeline_matrix import PipelineMatrix, PipelineSpec
 from rag_eval.services.embeddings.embedder import Embedder
 from rag_eval.services.embeddings.fuelix_embedder import FuelixEmbedder
 from rag_eval.services.embeddings.local_embedder import LocalEmbedder
 from rag_eval.services.generation.llm_client import FuelixLLMClient
 from rag_eval.services.generation.rag_prompt import RAGPrompt
-from rag_eval.services.pipeline import RAGPipeline
+from rag_eval.services.pipeline import PipelineAnswer, RAGPipeline
+from rag_eval.services.response import (
+    AskRenderer,
+    AskRenderInput,
+    CompareRenderer,
+    CompareRenderInput,
+    EmbedderRun,
+)
 from rag_eval.services.retrieval.retriever import Retriever
 from rag_eval.utils.settings import Settings
 
+_NO_RAG_SYSTEM_PROMPT = (
+    "You are a helpful assistant. Answer the user's question using only your "
+    "internal knowledge. Do not have access to any external documents."
+)
+
+_DIDACTIC_EMBEDDERS: tuple[EmbedderAlias, ...] = ("openai", "bge-small", "bge-large")
+
+
+@dataclass(frozen=True)
+class _Run:
+    alias: EmbedderAlias
+    spec: PipelineSpec
+    answer: PipelineAnswer | None
+    error: str | None
+
 
 class QueryRouter:
-    """ad-hoc /query endpoint. Reuses already-indexed Qdrant collections; if
-    the requested pipeline has no collection yet, returns 409.
+    """Didactic RAG endpoints.
+
+    - POST /ask     — single question, minimal JSON: question, answer,
+                      retrieved_documents (text-only), and an optional
+                      response_without_rag when `with_control=true`.
+    - POST /compare — same question across the three didactic embedders;
+                      JSON: question + per-embedder { answer,
+                      retrieved_documents } or { error }.
+
+    Default response is JSON. `?format=markdown` returns a clean markdown view
+    rendered by ``services/response``.
     """
 
     def __init__(
@@ -34,6 +77,8 @@ class QueryRouter:
         self._llm = llm
         self._embedders: dict[str, Embedder] = {}
         self._prompt = RAGPrompt()
+        self._ask_renderer = AskRenderer()
+        self._compare_renderer = CompareRenderer()
         self._router = APIRouter(tags=["query"])
         self._register_routes()
 
@@ -42,59 +87,155 @@ class QueryRouter:
         return self._router
 
     def _register_routes(self) -> None:
-        @self._router.post("/query", response_model=QueryResponse)
-        async def query(req: QueryRequest) -> QueryResponse:
-            specs = PipelineMatrix.build()
-            spec = self._select(specs, req.pipeline_id)
-            if spec is None:
-                raise HTTPException(400, f"Unknown pipeline_id: {req.pipeline_id}")
+        @self._router.post("/ask")
+        async def ask(req: AskRequest, format: str = Query(default="json")):
+            return await self._handle_ask(req, format)
 
-            collection = spec.collection_name()
-            try:
-                size = await self._store.collection_size(collection)
-            except Exception:
-                size = 0
-            if size == 0:
-                raise HTTPException(
-                    409,
-                    f"Collection {collection} not indexed. Run /experiments/run first.",
+        @self._router.post("/compare")
+        async def compare(req: CompareRequest, format: str = Query(default="json")):
+            return await self._handle_compare(req, format)
+
+    async def _handle_ask(self, req: AskRequest, format: str):
+        spec = self._spec_for_alias(req.embedder)
+        await self._require_indexed(spec, embedder_alias=req.embedder)
+
+        rag_task = asyncio.create_task(self._run_rag(spec, req.question, req.top_k))
+        no_rag_task: asyncio.Task[str] | None = None
+        if req.with_control:
+            no_rag_task = asyncio.create_task(self._run_no_rag(req.question))
+
+        rag_result = await rag_task
+        answer_no_rag: str | None = await no_rag_task if no_rag_task is not None else None
+
+        chunks_texts = [r.chunk.text for r in rag_result.retrieved]
+
+        if format == "markdown":
+            render_input = AskRenderInput(
+                question=req.question,
+                answer_with_rag=rag_result.answer,
+                chunks_texts=chunks_texts,
+                answer_no_rag=answer_no_rag,
+            )
+            return PlainTextResponse(self._ask_renderer.render(render_input))
+
+        return AskJSONResponse(
+            question=req.question,
+            answer=rag_result.answer,
+            retrieved_documents={
+                str(i): text for i, text in enumerate(chunks_texts, start=1)
+            },
+            response_without_rag=answer_no_rag,
+        )
+
+    async def _handle_compare(self, req: CompareRequest, format: str):
+        specs = [self._spec_for_alias(a) for a in _DIDACTIC_EMBEDDERS]
+        runs = await asyncio.gather(
+            *(
+                self._run_one(alias, spec, req.question, req.top_k)
+                for alias, spec in zip(_DIDACTIC_EMBEDDERS, specs, strict=True)
+            )
+        )
+
+        if format == "markdown":
+            embedder_runs = [
+                EmbedderRun(
+                    embedder_alias=r.alias,
+                    chunks_texts=[rc.chunk.text for rc in r.answer.retrieved]
+                    if r.answer
+                    else [],
+                    answer=r.answer.answer if r.answer else "",
+                    error=r.error,
                 )
-
-            embedder = self._get_embedder(spec)
-            retriever = Retriever(embedder, self._store, collection, top_k=req.top_k)
-            pipeline = RAGPipeline(
-                pipeline_id=spec.pipeline_id,
-                embedder=embedder,
-                retriever=retriever,
-                llm=self._llm,
-                prompt=self._prompt,
+                for r in runs
+            ]
+            render_input = CompareRenderInput(
+                question=req.question, runs=embedder_runs
             )
-            answer = await pipeline.answer(req.question, top_k=req.top_k)
-            contexts = None
-            if req.include_contexts:
-                contexts = [
-                    RetrievedContext(
-                        chunk_id=r.chunk.chunk_id,
-                        doc_id=r.chunk.doc_id,
-                        text=r.chunk.text,
-                        score=r.score,
-                    )
-                    for r in answer.retrieved
-                ]
-            return QueryResponse(
-                answer=answer.answer,
-                pipeline_id=spec.pipeline_id,
-                contexts=contexts,
-                latency_ms=answer.latency_ms,
+            return PlainTextResponse(self._compare_renderer.render(render_input))
+
+        results: dict[str, CompareEmbedderResult] = {}
+        for r in runs:
+            if r.answer is None:
+                results[r.alias] = CompareEmbedderResult(error=r.error)
+                continue
+            results[r.alias] = CompareEmbedderResult(
+                answer=r.answer.answer,
+                retrieved_documents={
+                    str(i): rc.chunk.text
+                    for i, rc in enumerate(r.answer.retrieved, start=1)
+                },
+            )
+        return CompareJSONResponse(question=req.question, results=results)
+
+    async def _run_rag(
+        self, spec: PipelineSpec, question: str, top_k: int
+    ) -> PipelineAnswer:
+        embedder = self._get_embedder(spec)
+        retriever = Retriever(embedder, self._store, spec.collection_name(), top_k=top_k)
+        pipeline = RAGPipeline(
+            pipeline_id=spec.pipeline_id,
+            embedder=embedder,
+            retriever=retriever,
+            llm=self._llm,
+            prompt=self._prompt,
+        )
+        return await pipeline.answer(question, top_k=top_k)
+
+    async def _run_no_rag(self, question: str) -> str:
+        messages = [
+            {"role": "system", "content": _NO_RAG_SYSTEM_PROMPT},
+            {"role": "user", "content": question},
+        ]
+        return await self._llm.complete(messages)
+
+    async def _run_one(
+        self,
+        alias: EmbedderAlias,
+        spec: PipelineSpec,
+        question: str,
+        top_k: int,
+    ) -> _Run:
+        try:
+            size = await self._store.collection_size(spec.collection_name())
+            if size == 0:
+                return _Run(
+                    alias=alias,
+                    spec=spec,
+                    answer=None,
+                    error="collection empty — run `POST /index` first",
+                )
+            answer = await self._run_rag(spec, question, top_k)
+            return _Run(alias=alias, spec=spec, answer=answer, error=None)
+        except Exception as exc:  # noqa: BLE001
+            return _Run(
+                alias=alias,
+                spec=spec,
+                answer=None,
+                error=f"{type(exc).__name__}: {exc}",
             )
 
-    def _select(self, specs: list[PipelineSpec], pipeline_id: str | None) -> PipelineSpec | None:
-        if pipeline_id:
-            for s in specs:
-                if s.pipeline_id == pipeline_id:
-                    return s
-            return None
-        return specs[0] if specs else None
+    async def _require_indexed(
+        self, spec: PipelineSpec, *, embedder_alias: EmbedderAlias
+    ) -> None:
+        collection = spec.collection_name()
+        try:
+            size = await self._store.collection_size(collection)
+        except Exception:
+            size = 0
+        if size == 0:
+            raise HTTPException(
+                409,
+                f"Collection `{collection}` (embedder `{embedder_alias}`) is not "
+                f"indexed. Run `POST /index` to populate Qdrant.",
+            )
+
+    @staticmethod
+    def _spec_for_alias(alias: EmbedderAlias) -> PipelineSpec:
+        pipeline_id = EMBEDDER_TO_PIPELINE[alias]
+        for spec in PipelineMatrix.build():
+            if spec.pipeline_id == pipeline_id:
+                return spec
+        raise HTTPException(500, f"PipelineMatrix has no entry for {pipeline_id}")
 
     def _get_embedder(self, spec: PipelineSpec) -> Embedder:
         if spec.embedder in self._embedders:

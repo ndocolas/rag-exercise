@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 
 from fastapi import APIRouter, HTTPException
 from ulid import ULID
@@ -10,12 +11,21 @@ from rag_eval.db.experiment_store import ExperimentStore
 from rag_eval.db.results_store import ResultsStore
 from rag_eval.db.vector_store import QdrantVectorStore
 from rag_eval.models.schemas import (
+    BenchmarkRanking,
+    BenchmarkRequest,
+    BenchmarkResponse,
+    BenchmarkSummary,
+    BenchmarkWinner,
     ExperimentStatusResponse,
+    FlowPhase,
+    LatencyEntry,
     PipelineInfo,
+    PipelineScore,
     RunExperimentRequest,
     RunExperimentResponse,
 )
 from rag_eval.services.benchmark.benchmark_runner import BenchmarkRunner, RunOptions
+from rag_eval.services.benchmark.digest import build_digest
 from rag_eval.services.benchmark.pipeline_matrix import PipelineMatrix, PipelineSpec
 from rag_eval.services.benchmark.report_generator import ReportGenerator
 from rag_eval.services.data.fiqa_dataset import FiQADataset
@@ -41,11 +51,17 @@ class ExperimentsRouter:
         self._llm = llm
         self._tasks: dict[str, asyncio.Task] = {}
         self._router = APIRouter(prefix="/experiments", tags=["experiments"])
+        self._benchmark_router = APIRouter(tags=["benchmark"])
         self._register_routes()
+        self._register_benchmark_route()
 
     @property
     def router(self) -> APIRouter:
         return self._router
+
+    @property
+    def benchmark_router(self) -> APIRouter:
+        return self._benchmark_router
 
     def _register_routes(self) -> None:
         @self._router.post("/run", response_model=RunExperimentResponse, status_code=202)
@@ -149,3 +165,113 @@ class ExperimentsRouter:
             ReportGenerator(results_store, seed=self._settings.seed).generate()
         finally:
             self._tasks.pop(experiment_id, None)
+
+    def _register_benchmark_route(self) -> None:
+        """One-shot synchronous benchmark over all 9 pipelines.
+
+        Unlike ``POST /experiments/run``, this awaits the runner inline and
+        returns the digest + markdown report in the same HTTP response, so a
+        `.rest` client can read results without polling.
+        """
+
+        @self._benchmark_router.post("/benchmark", response_model=BenchmarkResponse)
+        async def run_benchmark(req: BenchmarkRequest) -> BenchmarkResponse:
+            specs = PipelineMatrix.build(filter_ids=req.pipeline_filter)
+            if not specs:
+                raise HTTPException(400, "No pipelines matched pipeline_filter")
+            experiment_id = f"exp_{ULID()}"
+            config = req.model_dump()
+            self._experiment_store.create(experiment_id, name=req.name, config=config)
+
+            dataset = FiQADataset(
+                data_dir=self._settings.fiqa_data_dir,
+                subsample_size=req.subsample_size,
+                seed=self._settings.seed,
+            )
+            results_store = ResultsStore(self._settings.results_dir, experiment_id)
+            runner = BenchmarkRunner(
+                settings=self._settings,
+                specs=specs,
+                dataset=dataset,
+                store=self._store,
+                embedding_cache=self._embedding_cache,
+                results_store=results_store,
+                experiment_store=self._experiment_store,
+                llm=self._llm,
+            )
+            options = RunOptions(
+                experiment_id=experiment_id,
+                name=req.name,
+                pipeline_filter=req.pipeline_filter,
+                subsample_size=req.subsample_size,
+                queries_limit=req.queries_limit,
+                top_k=req.top_k,
+                judge_model=None,
+                force_reindex=req.force_reindex,
+                force_regen=req.force_regen,
+                skip_llm_judges=req.skip_llm_judges,
+            )
+
+            t0 = time.monotonic()
+            try:
+                await runner.run(options)
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=500,
+                    detail={"experiment_id": experiment_id, "error": str(exc)},
+                ) from exc
+
+            report = ReportGenerator(results_store, seed=self._settings.seed).generate()
+            digest = build_digest(
+                results_store.read_aggregate(), results_store.read_per_query()
+            )
+            duration = time.monotonic() - t0
+
+            winner = (
+                BenchmarkWinner(**digest.summary.winner.__dict__)
+                if digest.summary.winner is not None
+                else None
+            )
+            summary = BenchmarkSummary(
+                winner=winner,
+                best_per_chunking={
+                    k: PipelineScore(**v.__dict__)
+                    for k, v in digest.summary.best_per_chunking.items()
+                },
+                best_per_embedder={
+                    k: PipelineScore(**v.__dict__)
+                    for k, v in digest.summary.best_per_embedder.items()
+                },
+                fastest=(
+                    LatencyEntry(**digest.summary.fastest.__dict__)
+                    if digest.summary.fastest is not None
+                    else None
+                ),
+                slowest=(
+                    LatencyEntry(**digest.summary.slowest.__dict__)
+                    if digest.summary.slowest is not None
+                    else None
+                ),
+                takeaways=digest.summary.takeaways,
+            )
+            ranking = [BenchmarkRanking(**r.__dict__) for r in digest.ranking]
+
+            flow = [
+                FlowPhase(
+                    phase=ev.phase,
+                    detail=ev.detail,
+                    duration_ms=round(ev.duration_ms, 2),
+                    data=ev.data,
+                )
+                for ev in runner.flow
+            ]
+            return BenchmarkResponse(
+                experiment_id=experiment_id,
+                status="completed",
+                duration_seconds=round(duration, 2),
+                pipelines_run=[s.pipeline_id for s in specs],
+                flow=flow,
+                summary=summary,
+                ranking=ranking,
+                report_markdown=report.markdown,
+            )

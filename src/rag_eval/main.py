@@ -1,16 +1,29 @@
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 
 import httpx
 import structlog
 from fastapi import FastAPI
 
+structlog.configure(
+    processors=[
+        structlog.processors.add_log_level,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.dev.ConsoleRenderer(exception_formatter=structlog.dev.plain_traceback),
+    ],
+    wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
+    cache_logger_on_first_use=True,
+)
+
 from rag_eval.db.embedding_cache import EmbeddingCache
 from rag_eval.db.experiment_store import ExperimentStore
 from rag_eval.db.vector_store import QdrantVectorStore
 from rag_eval.models.schemas import HealthResponse
+from rag_eval.routes.dataset import DatasetRouter
 from rag_eval.routes.experiments import ExperimentsRouter
+from rag_eval.routes.index import IndexRouter
 from rag_eval.routes.query import QueryRouter
 from rag_eval.services.generation.llm_client import FuelixLLMClient
 from rag_eval.utils.settings import Settings, get_settings
@@ -89,8 +102,17 @@ class RAGEvalAPI:
             embedding_cache=self._embedding_cache,
             llm=self._llm,
         )
+        index_router = IndexRouter(
+            settings=s,
+            store=self._store,
+            embedding_cache=self._embedding_cache,
+        )
+        dataset_router = DatasetRouter(settings=s)
         self.app.include_router(experiments_router.router)
+        self.app.include_router(experiments_router.benchmark_router)
         self.app.include_router(query_router.router)
+        self.app.include_router(index_router.router)
+        self.app.include_router(dataset_router.router)
 
     async def _shutdown(self) -> None:
         if self._store is not None:
