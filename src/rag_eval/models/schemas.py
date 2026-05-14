@@ -74,13 +74,23 @@ class CompareRequest(BaseModel):
 
 
 class AskJSONResponse(BaseModel):
-    """Minimal JSON shape: question, answer, retrieved_documents (numbered text-only),
-    plus an optional `response_without_rag` when `with_control=true`."""
+    """JSON shape served by `POST /ask`.
+
+    Field order is intentional and preserved by Pydantic on serialization:
+    question → RAG answer → no-RAG answer → judge → retrieved documents.
+
+    `llm_as_judge` is a single free-form text produced by a second LLM
+    that *compares* the two answers (faithfulness, completeness,
+    hallucinations, winner). It is `None` when:
+    - `with_control=false` (no second answer to compare against), or
+    - the judge call fails.
+    """
 
     question: str
-    answer: str
-    retrieved_documents: dict[str, str]
+    response_with_rag: str
     response_without_rag: str | None = None
+    llm_as_judge: str | None = None
+    retrieved_documents: dict[str, str]
 
 
 class CompareEmbedderResult(BaseModel):

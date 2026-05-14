@@ -64,13 +64,18 @@ class FuelixLLMClient:
     def model(self) -> str:
         return self._model
 
-    async def complete(self, messages: list[dict]) -> str:
-        key = self._key(messages)
-        cached = self._get(key)
-        if cached is not None:
-            return cached
+    async def complete(self, messages: list[dict], *, use_cache: bool = True) -> str:
+        """Run a chat completion. Set ``use_cache=False`` to force a fresh
+        round-trip (skips both the read and the write).
+        """
+        if use_cache:
+            key = self._key(messages)
+            cached = self._get(key)
+            if cached is not None:
+                return cached
         answer = await self._call(messages)
-        self._put(key, answer)
+        if use_cache:
+            self._put(key, answer)
         return answer
 
     @retry(

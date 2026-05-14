@@ -42,6 +42,7 @@ class RAGEvalAPI:
         self._embedding_cache: EmbeddingCache | None = None
         self._experiment_store: ExperimentStore | None = None
         self._llm: FuelixLLMClient | None = None
+        self._judge_llm: FuelixLLMClient | None = None
         self.app = self._build()
 
     def _build(self) -> FastAPI:
@@ -88,6 +89,15 @@ class RAGEvalAPI:
             temperature=s.generator_temperature,
             max_tokens=s.generator_max_tokens,
         )
+        self._judge_llm = FuelixLLMClient(
+            api_key=s.fuelix_api_key,
+            model=s.judge_model,
+            base_url=s.fuelix_base_url,
+            cache_path=s.llm_cache_path,
+            concurrency=s.fuelix_llm_concurrency,
+            temperature=0.0,
+            max_tokens=512,
+        )
 
         experiments_router = ExperimentsRouter(
             settings=s,
@@ -101,6 +111,7 @@ class RAGEvalAPI:
             store=self._store,
             embedding_cache=self._embedding_cache,
             llm=self._llm,
+            judge_llm=self._judge_llm,
         )
         index_router = IndexRouter(
             settings=s,
@@ -123,6 +134,8 @@ class RAGEvalAPI:
             self._experiment_store.close()
         if self._llm is not None:
             self._llm.close()
+        if self._judge_llm is not None:
+            self._judge_llm.close()
 
     async def _qdrant_reachable(self) -> bool:
         try:

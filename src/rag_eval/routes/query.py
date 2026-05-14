@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable
 from dataclasses import dataclass
 
+import structlog
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import PlainTextResponse
 
@@ -21,6 +23,7 @@ from rag_eval.services.benchmark.pipeline_matrix import PipelineMatrix, Pipeline
 from rag_eval.services.embeddings.embedder import Embedder
 from rag_eval.services.embeddings.fuelix_embedder import FuelixEmbedder
 from rag_eval.services.embeddings.local_embedder import LocalEmbedder
+from rag_eval.services.evaluation.llm_judge import LLMJudge
 from rag_eval.services.generation.llm_client import FuelixLLMClient
 from rag_eval.services.generation.rag_prompt import RAGPrompt
 from rag_eval.services.pipeline import PipelineAnswer, RAGPipeline
@@ -33,6 +36,8 @@ from rag_eval.services.response import (
 )
 from rag_eval.services.retrieval.retriever import Retriever
 from rag_eval.utils.settings import Settings
+
+logger = structlog.get_logger(__name__)
 
 _NO_RAG_SYSTEM_PROMPT = (
     "You are a helpful assistant. Answer the user's question using only your "
@@ -70,11 +75,13 @@ class QueryRouter:
         store: QdrantVectorStore,
         embedding_cache: EmbeddingCache,
         llm: FuelixLLMClient,
+        judge_llm: FuelixLLMClient,
     ):
         self._settings = settings
         self._store = store
         self._embedding_cache = embedding_cache
         self._llm = llm
+        self._judge = LLMJudge(judge_llm)
         self._embedders: dict[str, Embedder] = {}
         self._prompt = RAGPrompt()
         self._ask_renderer = AskRenderer()
@@ -99,15 +106,29 @@ class QueryRouter:
         spec = self._spec_for_alias(req.embedder)
         await self._require_indexed(spec, embedder_alias=req.embedder)
 
-        rag_task = asyncio.create_task(self._run_rag(spec, req.question, req.top_k))
+        rag_task = asyncio.create_task(
+            self._run_rag(spec, req.question, req.top_k, use_cache=False)
+        )
         no_rag_task: asyncio.Task[str] | None = None
         if req.with_control:
-            no_rag_task = asyncio.create_task(self._run_no_rag(req.question))
+            no_rag_task = asyncio.create_task(self._run_no_rag(req.question, use_cache=False))
 
         rag_result = await rag_task
         answer_no_rag: str | None = await no_rag_task if no_rag_task is not None else None
 
         chunks_texts = [r.chunk.text for r in rag_result.retrieved]
+
+        judge_verdict: str | None = None
+        if answer_no_rag is not None:
+            judge_verdict = await self._safe_judge(
+                self._judge.compare(
+                    question=req.question,
+                    answer_with_rag=rag_result.answer,
+                    answer_without_rag=answer_no_rag,
+                    contexts=chunks_texts,
+                    use_cache=False,
+                )
+            )
 
         if format == "markdown":
             render_input = AskRenderInput(
@@ -115,15 +136,31 @@ class QueryRouter:
                 answer_with_rag=rag_result.answer,
                 chunks_texts=chunks_texts,
                 answer_no_rag=answer_no_rag,
+                judge_verdict=judge_verdict,
             )
             return PlainTextResponse(self._ask_renderer.render(render_input))
 
         return AskJSONResponse(
             question=req.question,
-            answer=rag_result.answer,
-            retrieved_documents={str(i): text for i, text in enumerate(chunks_texts, start=1)},
+            response_with_rag=rag_result.answer,
             response_without_rag=answer_no_rag,
+            llm_as_judge=judge_verdict,
+            retrieved_documents={str(i): text for i, text in enumerate(chunks_texts, start=1)},
         )
+
+    @staticmethod
+    async def _safe_judge(coro: Awaitable[str]) -> str | None:
+        """Run a judge call and swallow failures so the response still ships.
+
+        Anything from a transport hiccup to an unexpected payload turns into
+        ``None`` on the wire — we'd rather degrade the verdict field than
+        500 the whole `/ask`.
+        """
+        try:
+            return await coro
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("llm_judge_failed", error=f"{type(exc).__name__}: {exc}")
+            return None
 
     async def _handle_compare(self, req: CompareRequest, format: str):
         specs = [self._spec_for_alias(a) for a in _DIDACTIC_EMBEDDERS]
@@ -160,7 +197,14 @@ class QueryRouter:
             )
         return CompareJSONResponse(question=req.question, results=results)
 
-    async def _run_rag(self, spec: PipelineSpec, question: str, top_k: int) -> PipelineAnswer:
+    async def _run_rag(
+        self,
+        spec: PipelineSpec,
+        question: str,
+        top_k: int,
+        *,
+        use_cache: bool = True,
+    ) -> PipelineAnswer:
         embedder = self._get_embedder(spec)
         retriever = Retriever(embedder, self._store, spec.collection_name(), top_k=top_k)
         pipeline = RAGPipeline(
@@ -170,14 +214,14 @@ class QueryRouter:
             llm=self._llm,
             prompt=self._prompt,
         )
-        return await pipeline.answer(question, top_k=top_k)
+        return await pipeline.answer(question, top_k=top_k, use_cache=use_cache)
 
-    async def _run_no_rag(self, question: str) -> str:
+    async def _run_no_rag(self, question: str, *, use_cache: bool = True) -> str:
         messages = [
             {"role": "system", "content": _NO_RAG_SYSTEM_PROMPT},
             {"role": "user", "content": question},
         ]
-        return await self._llm.complete(messages)
+        return await self._llm.complete(messages, use_cache=use_cache)
 
     async def _run_one(
         self,

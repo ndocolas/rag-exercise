@@ -11,24 +11,24 @@ class AskRenderInput:
     answer_with_rag: str
     chunks_texts: list[str]
     answer_no_rag: str | None
+    judge_verdict: str | None = None
 
 
 class AskRenderer:
-    """Markdown view of `/ask`. Mirrors the JSON shape: question, answer,
-    retrieved documents, optional answer-without-RAG. No meta, citations
-    table, or system prompt section.
+    """Markdown view of `/ask`. Mirrors the JSON shape: question, RAG
+    answer, optional no-RAG answer, comparative judge verdict, then
+    retrieved documents at the end.
     """
 
     def render(self, data: AskRenderInput) -> str:
         out: list[str] = []
         out += ["# Pergunta", "", data.question.strip(), ""]
         out += [
-            "# Resposta",
+            "# Resposta (com RAG)",
             "",
             CitationTracer.highlight_citations(data.answer_with_rag.strip()),
             "",
         ]
-        out += self._documents_section(data.chunks_texts)
         if data.answer_no_rag is not None:
             out += [
                 "# Resposta sem RAG",
@@ -36,6 +36,14 @@ class AskRenderer:
                 data.answer_no_rag.strip(),
                 "",
             ]
+        if data.judge_verdict is not None:
+            out += [
+                "# Avaliação (LLM-as-judge) — comparação",
+                "",
+                data.judge_verdict.strip(),
+                "",
+            ]
+        out += self._documents_section(data.chunks_texts)
         return "\n".join(out)
 
     @staticmethod

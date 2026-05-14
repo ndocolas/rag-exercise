@@ -1,6 +1,14 @@
 ### 4. RAG didático — pergunta única.
 ### Pré-req: rodar `3-index.rest` uma vez.
 ### JSON é o default. Use `?format=markdown` para a versão renderizada.
+###
+### Resposta JSON (nesta ordem):
+###   - question
+###   - response_with_rag
+###   - response_without_rag   ← null quando `with_control=false`
+###   - llm_as_judge           ← texto livre do juiz (gpt-4o) comparando as 2
+###                              respostas; null quando não há response_without_rag
+###   - retrieved_documents
 
 @host = http://localhost:8000
 

@@ -60,7 +60,13 @@ class RAGPipeline:
     def retriever(self) -> Retriever:
         return self._retriever
 
-    async def answer(self, question: str, top_k: int | None = None) -> PipelineAnswer:
+    async def answer(
+        self,
+        question: str,
+        top_k: int | None = None,
+        *,
+        use_cache: bool = True,
+    ) -> PipelineAnswer:
         k = top_k or self._retriever._top_k
         trace: list[TraceEvent] = []
         trace.append(
@@ -116,7 +122,7 @@ class RAGPipeline:
                 data={"messages": len(messages), "contexts": len(result.chunks)},
             )
         )
-        answer = await self._llm.complete(messages)
+        answer = await self._llm.complete(messages, use_cache=use_cache)
         t2 = time.perf_counter()
         generate_ms = (t2 - t1) * 1000
         trace.append(
