@@ -61,6 +61,24 @@ class FullDatasetResponse(BaseModel):
     queries: list[FullQuery]
 
 
+class ExpectedDocument(BaseModel):
+    doc_id: str
+    title: str
+    text: str
+    chars: int
+
+
+class HeadQuery(BaseModel):
+    query_id: str
+    question: str
+    expected_documents: list[ExpectedDocument]
+
+
+class DatasetHeadResponse(BaseModel):
+    n: int
+    queries: list[HeadQuery]
+
+
 class DatasetRouter:
     """Inspect the loaded FiQA dataset: stats + sample queries + sample docs."""
 
@@ -129,6 +147,48 @@ class DatasetRouter:
                 sample_queries=sample_queries,
                 sample_documents=sample_documents,
             )
+
+        @self._router.get("/head", response_model=DatasetHeadResponse)
+        async def head(
+            n: int = Query(default=10, ge=1, le=50),
+            preview_chars: int = Query(default=0, ge=0, le=5000),
+            seed: int | None = Query(default=None),
+        ) -> DatasetHeadResponse:
+            data = await self._dataset.load()
+            shuffle_seed = seed if seed is not None else self._settings.seed
+            query_ids = list(data.queries.keys())
+            random.Random(shuffle_seed).shuffle(query_ids)
+            picked = query_ids[: min(n, len(query_ids))]
+
+            head_queries: list[HeadQuery] = []
+            for qid in picked:
+                expected: list[ExpectedDocument] = []
+                for did in sorted(data.relevant_doc_ids(qid)):
+                    doc = data.corpus.get(did)
+                    if doc is None:
+                        continue
+                    full_text = doc.text
+                    text = (
+                        full_text
+                        if preview_chars == 0 or len(full_text) <= preview_chars
+                        else full_text[:preview_chars] + "..."
+                    )
+                    expected.append(
+                        ExpectedDocument(
+                            doc_id=doc.doc_id,
+                            title=doc.title,
+                            text=text,
+                            chars=len(full_text),
+                        )
+                    )
+                head_queries.append(
+                    HeadQuery(
+                        query_id=qid,
+                        question=data.queries[qid].text,
+                        expected_documents=expected,
+                    )
+                )
+            return DatasetHeadResponse(n=len(head_queries), queries=head_queries)
 
         @self._router.get("/queries", response_model=list[QueryPreview])
         async def list_queries(

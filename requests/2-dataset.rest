@@ -26,3 +26,16 @@ GET {{host}}/dataset/queries?search=tax&limit=20
 ### 2.5 — Documento específico (texto bruto + queries que apontam para ele).
 ###       O `doc_id` vem dos previews acima. Também é citado nas respostas do `/ask`.
 GET {{host}}/dataset/documents/382236
+
+
+### 2.6 — `head` do ground truth: 10 queries random + TEXTO dos docs esperados inline.
+###       Amostra determinística por seed (default = 42). Resposta = pergunta + docs relevantes.
+GET {{host}}/dataset/head
+
+
+### 2.7 — Mesmo head mas com `seed` diferente — outra amostra de 10 queries.
+GET {{host}}/dataset/head?seed=7
+
+
+### 2.8 — Head com `preview_chars=500` para resposta menor (trunca textos longos).
+GET {{host}}/dataset/head?n=5&preview_chars=500
