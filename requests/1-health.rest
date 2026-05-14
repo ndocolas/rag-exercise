@@ -1,0 +1,18 @@
+### 1. Sanidade — API up? Qdrant up?
+
+@host = http://localhost:8000
+@qdrant = http://localhost:6333
+
+
+### 1.1 — Healthcheck da API.
+### Esperado: { "status":"ok", "qdrant":true, "fuelix_configured":true }
+GET {{host}}/health
+
+
+### 1.2 — Qdrant root (versão).
+GET {{qdrant}}/
+
+
+### 1.3 — Coleções já populadas no Qdrant.
+###       Se vier vazio, vá para `3-index.rest` antes de tentar `/ask` ou `/compare`.
+GET {{qdrant}}/collections

@@ -5,7 +5,7 @@ Benchmark sistemático que compara estratégias de RAG sobre FiQA-2018 e quantif
 ## Matriz experimental (3×3 = 9 pipelines)
 
 - **Chunking:** fixed (512/64), semantic (percentile 95), hierarchical (1024/256)
-- **Embeddings:** `text-embedding-3-small` (fuelix), `bge-small-en-v1.5` (local), `bge-m3` (local)
+- **Embeddings:** `text-embedding-3-small` (fuelix), `bge-small-en-v1.5` (local), `bge-large-en-v1.5` (local)
 
 LLM gerador fixo: `claude-sonnet-4-5` via fuelix. Judge: `gpt-4o`. Dataset: FiQA-2018 via BEIR.
 
@@ -15,13 +15,13 @@ LLM gerador fixo: `claude-sonnet-4-5` via fuelix. Judge: `gpt-4o`. Dataset: FiQA
 |----|----------|-----------|
 | P1 | fixed | text-embedding-3-small |
 | P2 | fixed | bge-small-en-v1.5 |
-| P3 | fixed | bge-m3 |
+| P3 | fixed | bge-large-en-v1.5 |
 | P4 | semantic | text-embedding-3-small |
 | P5 | semantic | bge-small-en-v1.5 |
-| P6 | semantic | bge-m3 |
+| P6 | semantic | bge-large-en-v1.5 |
 | P7 | hierarchical | text-embedding-3-small |
 | P8 | hierarchical | bge-small-en-v1.5 |
-| P9 | hierarchical | bge-m3 |
+| P9 | hierarchical | bge-large-en-v1.5 |
 
 ## Arquitetura
 
@@ -110,33 +110,73 @@ uv run scripts/ingest.py --pipelines P1 P5 --subsample 10000 --force
 uv run uvicorn rag_eval.main:app --reload
 ```
 
-Endpoints (base: `http://localhost:8000`):
+### Fluxo didático (recomendado)
+
+5 arquivos `.rest` numerados em [`requests/`](requests/README.md). Siga `1 → 2 → 3 → 4 → 5`:
+
+| # | Arquivo | Endpoint principal | O que mostra |
+|---|---|---|---|
+| 1 | [`requests/1-health.rest`](requests/1-health.rest) | `GET /health` | API + Qdrant + coleções existentes |
+| 2 | [`requests/2-dataset.rest`](requests/2-dataset.rest) | `GET /dataset/*` | conteúdo do FiQA (preview, queries, docs) |
+| 3 | [`requests/3-index.rest`](requests/3-index.rest) | `POST /index` | popular Qdrant com 3 embedders (idempotente) |
+| 4 | [`requests/4-ask.rest`](requests/4-ask.rest) | `POST /ask` | RAG: pergunta + chunks + resposta com citações + controle sem-RAG |
+| 5 | [`requests/5-compare.rest`](requests/5-compare.rest) | `POST /compare` | mesma pergunta × 3 embedders lado a lado |
+
+Exemplo:
+
+```bash
+# 1. Popular o Qdrant uma vez (3 embedders, idempotente)
+curl -X POST localhost:8000/index -H "Content-Type: application/json" -d '{}'
+
+# 2. Perguntar (com controle sem-RAG ativo)
+curl -X POST localhost:8000/ask \
+  -H "Content-Type: application/json" \
+  -d '{"question":"What is a business expense?","embedder":"openai","top_k":5}'
+
+# 3. Comparar embedders na mesma pergunta
+curl -X POST localhost:8000/compare \
+  -H "Content-Type: application/json" \
+  -d '{"question":"What is a business expense?","top_k":5}'
+```
+
+### Endpoints didáticos
 
 | Método | Rota | Descrição |
 |--------|------|-----------|
 | GET | `/health` | health check + Qdrant ping |
-| GET | `/experiments` | lista os 9 pipelines (`PipelineInfo`) |
-| POST | `/experiments/run` | dispara benchmark em background (202) |
+| GET | `/dataset/preview` | stats + sample queries/docs do FiQA |
+| GET | `/dataset/queries?search=...` | busca queries por palavra-chave |
+| GET | `/dataset/documents/{doc_id}` | doc cru + queries que apontam pra ele |
+| POST | `/index` | popula Qdrant com 3 embedders × chunking fixed (idempotente) |
+| POST | `/ask` | RAG: pergunta → JSON `{ question, answer, retrieved_documents, response_without_rag? }` |
+| POST | `/compare` | mesma pergunta × 3 embedders → JSON `{ question, results: { openai, bge-small, bge-large } }` |
+
+`POST /ask` body:
+
+```json
+{ "question": "...", "embedder": "openai" | "bge-small" | "bge-large",
+  "top_k": 5, "with_control": true }
+```
+
+`POST /compare` body:
+
+```json
+{ "question": "...", "top_k": 5 }
+```
+
+Resposta padrão = JSON minimal `{ question, answer, retrieved_documents, response_without_rag? }`. `?format=markdown` para versão humana renderizada.
+
+### Endpoints avançados (análise quantitativa)
+
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| GET | `/experiments` | lista os 9 pipelines da matriz (P1..P9) |
+| POST | `/benchmark` | roda matriz inline e devolve digest + relatório markdown |
+| POST | `/experiments/run` | dispara benchmark em background (202) — runs longos com judges |
 | GET | `/experiments/{id}` | status + progresso + métricas |
 | GET | `/experiments/{id}/report` | markdown do relatório |
-| POST | `/query` | query ad-hoc num pipeline já indexado |
 
-Exemplos:
-
-```bash
-# Query ad-hoc
-curl -X POST localhost:8000/query \
-  -H "Content-Type: application/json" \
-  -d '{"question":"What is a business expense?","pipeline_id":"P1"}'
-
-# Disparar benchmark
-curl -X POST localhost:8000/experiments/run \
-  -H "Content-Type: application/json" \
-  -d '{"name":"full_v1"}'
-
-# Pollar status
-curl localhost:8000/experiments/<experiment_id>
-```
+Use Swagger (`/docs`) ou `curl` direto. Não estão nos `.rest` didáticos pra não poluir o fluxo.
 
 ## Avaliação
 

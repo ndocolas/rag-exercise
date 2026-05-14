@@ -1,0 +1,27 @@
+### 3. Indexar o corpus no Qdrant — uma vez só.
+###
+### Cria 3 coleções (uma por embedder), todas usando o mesmo chunking
+### (`fixed`, 512/64). Esse é o pré-requisito para `/ask` e `/compare`.
+###
+### Idempotente: se a coleção já tem pontos, pula. Pode rodar de novo sem medo.
+###
+### Tempo: primeira execução costuma levar minutos (download de modelos locais
+### + chamadas ao embedder OpenAI). Subsequentes voltam em segundos.
+
+@host = http://localhost:8000
+
+
+### 3.1 — Indexar P1 (OpenAI), P2 (BGE small), P3 (BGE large) em uma chamada.
+### Resposta:
+### {
+###   "corpus_size": <N>,
+###   "embedders": [
+###     { "embedder":"openai",    "status":"indexed|already_indexed", "chunks_indexed":<N>, "duration_ms":... },
+###     { "embedder":"bge-small", ... },
+###     { "embedder":"bge-large", ... }
+###   ]
+### }
+POST {{host}}/index
+Content-Type: application/json
+
+{}

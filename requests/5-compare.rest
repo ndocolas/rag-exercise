@@ -1,0 +1,52 @@
+### 5. Comparação de embedders — 1 pergunta × 3 embedders simultâneos.
+###
+### Mesma pergunta, mesma LLM (claude-sonnet-4-5), mesmo chunking (`fixed 512/64`).
+### Único parâmetro que muda: o EMBEDDER.
+###
+### JSON é o default: { question, results: { openai: {...}, bge-small: {...}, bge-large: {...} } }.
+### Cada resultado tem `answer` + `retrieved_documents` (texto numerado), ou `error`.
+### Use `?format=markdown` para a versão renderizada.
+###
+### Pré-req: rodar `3-index.rest` uma vez.
+
+@host = http://localhost:8000
+
+
+### 5.1 — Pergunta clássica sobre IRA.
+POST {{host}}/compare
+Content-Type: application/json
+
+{
+  "question": "What is the difference between a Roth IRA and a Traditional IRA?",
+  "top_k": 5
+}
+
+
+### 5.2 — Pergunta sobre juros compostos.
+POST {{host}}/compare
+Content-Type: application/json
+
+{
+  "question": "How does compound interest work?",
+  "top_k": 5
+}
+
+
+### 5.3 — Pergunta mais ambígua (advisor + mortgage). Embedders costumam divergir aqui.
+POST {{host}}/compare
+Content-Type: application/json
+
+{
+  "question": "Do financial advisors get better deals on mortgages?",
+  "top_k": 5
+}
+
+
+### 5.4 — Markdown human-readable (`?format=markdown`).
+POST {{host}}/compare?format=markdown
+Content-Type: application/json
+
+{
+  "question": "How does compound interest work?",
+  "top_k": 3
+}

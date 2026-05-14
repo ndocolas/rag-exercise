@@ -1,0 +1,72 @@
+### 4. RAG didático — pergunta única.
+### Pré-req: rodar `3-index.rest` uma vez.
+### JSON é o default. Use `?format=markdown` para a versão renderizada.
+
+@host = http://localhost:8000
+
+
+### 4.1 — `openai` · pergunta clássica sobre IRA.
+POST {{host}}/ask
+Content-Type: application/json
+
+{
+  "question": "What is the difference between a Roth IRA and a Traditional IRA?",
+  "embedder": "openai",
+  "top_k": 5
+}
+
+
+### 4.2 — `bge-small` · juros compostos (top_k menor).
+POST {{host}}/ask
+Content-Type: application/json
+
+{
+  "question": "How does compound interest work?",
+  "embedder": "bge-small",
+  "top_k": 3
+}
+
+
+### 4.3 — `bge-large` · advisor + mortgage (pergunta mais ambígua).
+POST {{host}}/ask
+Content-Type: application/json
+
+{
+  "question": "Do financial advisors get better deals on mortgages?",
+  "embedder": "bge-large",
+  "top_k": 5
+}
+
+
+### 4.4 — `openai` · pergunta FORA do corpus.
+POST {{host}}/ask
+Content-Type: application/json
+
+{
+  "question": "What is the current Bitcoin price?",
+  "embedder": "openai",
+  "top_k": 5
+}
+
+
+### 4.5 — `bge-small` · sem o controle (só RAG).
+POST {{host}}/ask
+Content-Type: application/json
+
+{
+  "question": "How does compound interest work?",
+  "embedder": "bge-small",
+  "top_k": 3,
+  "with_control": false
+}
+
+
+### 4.6 — `bge-large` · markdown human-readable (`?format=markdown`).
+POST {{host}}/ask?format=markdown
+Content-Type: application/json
+
+{
+  "question": "How does compound interest work?",
+  "embedder": "bge-large",
+  "top_k": 3
+}

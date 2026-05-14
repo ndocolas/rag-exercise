@@ -1,0 +1,28 @@
+### 2. O que tem dentro do dataset FiQA-2018?
+### Q&A financeiro: StackExchange Money + Reddit. Domínio: finanças pessoais
+### (IRA, mortgage, taxes, ETF, S-corp, juros compostos, etc.).
+
+@host = http://localhost:8000
+
+
+### 2.1 — Visão geral. Stats + 10 queries random + 5 docs random.
+###       Use o resultado para descobrir doc_ids e query_ids reais que existem.
+GET {{host}}/dataset/preview
+
+
+### 2.2 — Visão maior: 20 queries + 10 docs com preview de 500 chars.
+GET {{host}}/dataset/preview?n_queries=20&n_docs=10&doc_preview_chars=500
+
+
+### 2.3 — Browse de queries paginadas (o que as pessoas perguntam).
+GET {{host}}/dataset/queries?limit=30&offset=0
+
+
+### 2.4 — Buscar queries por palavra-chave.
+###       Troque "tax" por "mortgage", "bitcoin", "401k", etc.
+GET {{host}}/dataset/queries?search=tax&limit=20
+
+
+### 2.5 — Documento específico (texto bruto + queries que apontam para ele).
+###       O `doc_id` vem dos previews acima. Também é citado nas respostas do `/ask`.
+GET {{host}}/dataset/documents/382236
