@@ -48,6 +48,14 @@ class RunOptions:
     query_concurrency: int = 8
 
 
+@dataclass(frozen=True)
+class FlowEvent:
+    phase: str
+    detail: str
+    duration_ms: float
+    data: dict | None = None
+
+
 class BenchmarkRunner:
     """Orchestrates the full benchmark: index → retrieve+generate → evaluate → report.
 
@@ -83,24 +91,64 @@ class BenchmarkRunner:
         self._experiment_store = experiment_store
         self._llm = llm
         self._prompt = RAGPrompt()
+        self.flow: list[FlowEvent] = []
+
+    def _record(self, phase: str, detail: str, t0: float, data: dict | None = None) -> None:
+        self.flow.append(
+            FlowEvent(
+                phase=phase,
+                detail=detail,
+                duration_ms=(time.monotonic() - t0) * 1000,
+                data=data,
+            )
+        )
 
     async def run(self, options: RunOptions) -> None:
         experiment_id = options.experiment_id
         try:
             self._update(experiment_id, "running", phase="loading_data")
+            t_load = time.monotonic()
             data = await self._dataset.load()
             queries = list(data.queries.values())
             if options.queries_limit:
                 queries = queries[: options.queries_limit]
             logger.info("dataset_loaded", n_corpus=len(data.corpus), n_queries=len(queries))
+            self._record(
+                "loading_data",
+                f"corpus={len(data.corpus)} queries={len(queries)}",
+                t_load,
+                {"corpus": len(data.corpus), "queries": len(queries)},
+            )
 
             self._update(
                 experiment_id, "running", phase="indexing", pipelines_total=len(self._specs)
             )
+            t_index_all = time.monotonic()
             embedders: dict[str, Embedder] = {}
+            failed: set[str] = set()
             for i, spec in enumerate(self._specs, start=1):
-                embedder = self._get_or_make_embedder(spec, embedders)
-                await self._index_pipeline(spec, data, embedder, options.force_reindex)
+                t_p = time.monotonic()
+                try:
+                    embedder = self._get_or_make_embedder(spec, embedders)
+                    await self._index_pipeline(spec, data, embedder, options.force_reindex)
+                    size = await self._store.collection_size(spec.collection_name())
+                    self._record(
+                        "indexing",
+                        f"{spec.pipeline_id} {spec.chunking}+{spec.embedder.split(':',1)[-1]} points={size}",
+                        t_p,
+                        {"pipeline_id": spec.pipeline_id, "points": size},
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.error(
+                        "indexing_failed", pipeline=spec.pipeline_id, error=str(exc)
+                    )
+                    failed.add(spec.pipeline_id)
+                    self._record(
+                        "indexing_failed",
+                        f"{spec.pipeline_id} skipped: {type(exc).__name__}: {str(exc)[:120]}",
+                        t_p,
+                        {"pipeline_id": spec.pipeline_id, "error": str(exc)[:300]},
+                    )
                 self._update(
                     experiment_id,
                     "running",
@@ -108,6 +156,12 @@ class BenchmarkRunner:
                     pipelines_completed=i,
                     pipelines_total=len(self._specs),
                 )
+            self._record(
+                "indexing_done",
+                f"{len(self._specs)} pipelines indexed",
+                t_index_all,
+                {"pipelines": len(self._specs)},
+            )
 
             self._update(
                 experiment_id,
@@ -115,9 +169,35 @@ class BenchmarkRunner:
                 phase="retrieval_generation",
                 pipelines_total=len(self._specs),
             )
+            t_rg = time.monotonic()
             for i, spec in enumerate(self._specs, start=1):
-                embedder = embedders[spec.embedder]
-                await self._run_queries(spec, embedder, queries, options)
+                if spec.pipeline_id in failed:
+                    self._record(
+                        "retrieval_generation_skipped",
+                        f"{spec.pipeline_id} skipped (indexing failed)",
+                        time.monotonic(),
+                        {"pipeline_id": spec.pipeline_id},
+                    )
+                    continue
+                t_p = time.monotonic()
+                try:
+                    embedder = embedders[spec.embedder]
+                    await self._run_queries(spec, embedder, queries, options)
+                    self._record(
+                        "retrieval_generation",
+                        f"{spec.pipeline_id} queries={len(queries)}",
+                        t_p,
+                        {"pipeline_id": spec.pipeline_id, "queries": len(queries)},
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.error("queries_failed", pipeline=spec.pipeline_id, error=str(exc))
+                    failed.add(spec.pipeline_id)
+                    self._record(
+                        "retrieval_generation_failed",
+                        f"{spec.pipeline_id} {type(exc).__name__}: {str(exc)[:120]}",
+                        t_p,
+                        {"pipeline_id": spec.pipeline_id, "error": str(exc)[:300]},
+                    )
                 self._update(
                     experiment_id,
                     "running",
@@ -125,14 +205,40 @@ class BenchmarkRunner:
                     pipelines_completed=i,
                     pipelines_total=len(self._specs),
                 )
+            self._record(
+                "retrieval_generation_done",
+                f"{len(self._specs)} pipelines x {len(queries)} queries",
+                t_rg,
+                {"pipelines": len(self._specs), "queries": len(queries)},
+            )
 
             self._update(
                 experiment_id, "running", phase="evaluation", pipelines_total=len(self._specs)
             )
+            t_eval = time.monotonic()
             aggregates: list[AggregateResult] = []
             for i, spec in enumerate(self._specs, start=1):
+                if spec.pipeline_id in failed:
+                    self._record(
+                        "evaluation_skipped",
+                        f"{spec.pipeline_id} skipped",
+                        time.monotonic(),
+                        {"pipeline_id": spec.pipeline_id},
+                    )
+                    continue
+                t_p = time.monotonic()
                 agg = await self._evaluate_pipeline(spec, data, options)
                 aggregates.append(agg)
+                self._record(
+                    "evaluation",
+                    f"{spec.pipeline_id} composite={agg.composite_score:.4f}",
+                    t_p,
+                    {
+                        "pipeline_id": spec.pipeline_id,
+                        "composite_score": agg.composite_score,
+                        "metrics": agg.metrics,
+                    },
+                )
                 self._update(
                     experiment_id,
                     "running",
@@ -140,13 +246,23 @@ class BenchmarkRunner:
                     pipelines_completed=i,
                     pipelines_total=len(self._specs),
                 )
+            self._record(
+                "evaluation_done",
+                f"{len(aggregates)} pipelines evaluated",
+                t_eval,
+                {"pipelines": len(aggregates)},
+            )
 
             self._update(experiment_id, "running", phase="reporting")
+            t_rep = time.monotonic()
             self._results_store.write_aggregate(aggregates)
+            self._record("reporting", "aggregate written", t_rep)
             self._update(experiment_id, "completed", phase="done")
 
         except Exception as exc:  # noqa: BLE001
-            logger.exception("benchmark_failed", experiment_id=experiment_id)
+            logger.error(
+                "benchmark_failed", experiment_id=experiment_id, error=str(exc)
+            )
             self._experiment_store.update(experiment_id, status="failed", error=str(exc))
             raise
 
