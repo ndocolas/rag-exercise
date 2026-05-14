@@ -121,6 +121,7 @@ uv run uvicorn rag_eval.main:app --reload
 | 3 | [`requests/3-index.rest`](requests/3-index.rest) | `POST /index` | popular Qdrant com 3 embedders (idempotente) |
 | 4 | [`requests/4-ask.rest`](requests/4-ask.rest) | `POST /ask` | RAG: pergunta + chunks + resposta com citações + controle sem-RAG |
 | 5 | [`requests/5-compare.rest`](requests/5-compare.rest) | `POST /compare` | mesma pergunta × 3 embedders lado a lado |
+| 6 | [`requests/6-evaluate.rest`](requests/6-evaluate.rest) | `POST /evaluate` | benchmark de retrieval × ground truth FiQA (6 métricas + nota 0-100) |
 
 Exemplo:
 
@@ -145,11 +146,13 @@ curl -X POST localhost:8000/compare \
 |--------|------|-----------|
 | GET | `/health` | health check + Qdrant ping |
 | GET | `/dataset/preview` | stats + sample queries/docs do FiQA |
+| GET | `/dataset/head` | head do ground truth: N queries (random determinístico) + texto dos docs esperados inline |
 | GET | `/dataset/queries?search=...` | busca queries por palavra-chave |
 | GET | `/dataset/documents/{doc_id}` | doc cru + queries que apontam pra ele |
 | POST | `/index` | popula Qdrant com 3 embedders × chunking fixed (idempotente) |
 | POST | `/ask` | RAG: pergunta → JSON `{ question, answer, retrieved_documents, response_without_rag? }` |
 | POST | `/compare` | mesma pergunta × 3 embedders → JSON `{ question, results: { openai, bge-small, bge-large } }` |
+| POST | `/evaluate` | retrieval × ground truth FiQA: 1 embedder × N queries → JSON `{ embedder, queries_avaliadas, hit_rate, precision@10, recall@10, ndcg@10, score }` |
 
 `POST /ask` body:
 
