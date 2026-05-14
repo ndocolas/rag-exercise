@@ -30,18 +30,32 @@ class SemanticChunker(Chunker):
         return f"semantic_p{self._percentile}"
 
     def chunk(self, documents: Iterable[Document]) -> list[Chunk]:
-        chunks: list[Chunk] = []
-        for doc in documents:
+        docs = list(documents)
+        per_doc_sentences: list[list[str]] = []
+        all_sentences: list[str] = []
+        for doc in docs:
             text = self._compose(doc)
             sentences = self._split_sentences(text)
+            per_doc_sentences.append(sentences)
+            if len(sentences) > 1:
+                all_sentences.extend(sentences)
+
+        all_vecs = (
+            np.asarray(self._embedder.embed_sync(all_sentences)) if all_sentences else np.zeros((0, 0))
+        )
+
+        chunks: list[Chunk] = []
+        cursor = 0
+        for doc, sentences in zip(docs, per_doc_sentences, strict=True):
+            text = self._compose(doc)
             if len(sentences) <= 1:
                 chunks.append(Chunk(self._chunk_id(doc.doc_id, 0), doc.doc_id, text))
                 continue
 
-            vecs = np.asarray(self._embedder.embed_sync(sentences))
+            vecs = all_vecs[cursor : cursor + len(sentences)]
+            cursor += len(sentences)
             distances = self._consecutive_distances(vecs)
             threshold = float(np.percentile(distances, self._percentile)) if len(distances) else 0.0
-
             buckets = self._group(sentences, distances, threshold)
             for idx, bucket in enumerate(buckets):
                 chunks.append(
