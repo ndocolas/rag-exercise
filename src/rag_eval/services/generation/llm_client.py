@@ -68,14 +68,16 @@ class FuelixLLMClient:
         """Run a chat completion. Set ``use_cache=False`` to force a fresh
         round-trip (skips both the read and the write).
         """
-        if use_cache:
-            key = self._key(messages)
-            cached = self._get(key)
-            if cached is not None:
-                return cached
+        if not use_cache:
+            return await self._call(messages)
+
+        key = self._key(messages)
+        cached = self._get(key)
+        if cached is not None:
+            return cached
+
         answer = await self._call(messages)
-        if use_cache:
-            self._put(key, answer)
+        self._put(key, answer)
         return answer
 
     @retry(
