@@ -26,6 +26,10 @@ dependencies = [
     "python-ulid>=3.0.0",
     "tiktoken>=0.8.0",
     "langchain-openai>=0.2.0",
+    "langgraph>=0.2.0",
+    "langsmith>=0.1.0",
+    "sympy>=1.13.0",
+    "python-dateutil>=2.9.0",
     "datasets>=3.0.0",
 ]
 

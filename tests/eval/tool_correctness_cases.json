@@ -1,0 +1,24 @@
+[
+  {"question": "What are the main risks of bond investing?", "expected_tool": "rag_tool"},
+  {"question": "What is a mutual fund and how does it work?", "expected_tool": "rag_tool"},
+  {"question": "Explain what dividend yield means in the context of stocks.", "expected_tool": "rag_tool"},
+  {"question": "What is the difference between a Roth IRA and a traditional IRA?", "expected_tool": "rag_tool"},
+  {"question": "What factors affect the price of a bond?", "expected_tool": "rag_tool"},
+  {"question": "How does compound interest differ from simple interest?", "expected_tool": "rag_tool"},
+  {"question": "What is dollar-cost averaging as an investment strategy?", "expected_tool": "rag_tool"},
+  {"question": "What are index funds and why do investors use them?", "expected_tool": "rag_tool"},
+
+  {"question": "What is 15% of 3000?", "expected_tool": "calculator_tool"},
+  {"question": "If I invest 5000 at an annual interest rate of 7%, how much will I have after 10 years with compound interest?", "expected_tool": "calculator_tool"},
+  {"question": "What is the percentage difference between 1200 and 1500?", "expected_tool": "calculator_tool"},
+  {"question": "If a stock goes from 80 to 95, what is the percentage gain?", "expected_tool": "calculator_tool"},
+  {"question": "Calculate 8.5% of 42000.", "expected_tool": "calculator_tool"},
+  {"question": "What is 1000 divided by 0.04?", "expected_tool": "calculator_tool"},
+  {"question": "If I earn 250 per month, how much is that annually?", "expected_tool": "calculator_tool"},
+
+  {"question": "How many years ago was 2008?", "expected_tool": "date_tool"},
+  {"question": "What is today's date?", "expected_tool": "date_tool"},
+  {"question": "How many years have passed since the 2008 financial crisis?", "expected_tool": "date_tool"},
+  {"question": "What year is it currently?", "expected_tool": "date_tool"},
+  {"question": "How long ago was the year 2000?", "expected_tool": "date_tool"}
+]
